@@ -1,12 +1,15 @@
 import hashlib
 import hmac
+import os
 import secrets
 import sqlite3
-import os
 
 
 DB_NAME = "chatbot.db"
 PASSWORD_HASH_ITERATIONS = 600_000
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL") or os.getenv("OLLAMA_HOST") or "http://localhost:11434"
+if not OLLAMA_BASE_URL.startswith(("http://", "https://")):
+    OLLAMA_BASE_URL = f"http://{OLLAMA_BASE_URL}"
 
 
 def get_connection():
@@ -154,33 +157,13 @@ def get_history(user_id):
 
     return history
 
+MODEL = os.getenv("AI_MODEL", "qwen3:4b")
 
-# ================================================
-# AI MODEL CONFIGURATION
-# ================================================
 
-def generate_response(mode, user_message):
-    """Generate AI response using OpenAI API"""
-    
-    try:
-        import openai
-        
-        # Get API key from Streamlit secrets or environment
-        api_key = None
-        try:
-            import streamlit as st
-            api_key = st.secrets.get("openai_api_key")
-        except:
-            api_key = os.getenv("OPENAI_API_KEY")
-        
-        if not api_key:
-            return "Error: OpenAI API key not configured. Please add it to Streamlit Secrets."
-        
-        openai.api_key = api_key
-        
-        # System prompts for different modes
-        SYSTEM_PROMPTS = {
-            "💬 Q&A": """You are a helpful AI assistant.
+SYSTEM_PROMPTS = {
+
+    "💬 Q&A": """
+You are a helpful AI assistant.
 
 Answer the user's questions clearly and accurately.
 
@@ -189,14 +172,17 @@ Important language rule:
 - If the user writes in English, respond in English.
 - If the user mixes Khmer and English, understand both.
 
-Use simple explanations when appropriate.""",
+Use simple explanations when appropriate.
+""",
 
-            "✍️ Prompt Generator": """You are an expert AI Prompt Engineer.
+    "✍️ Prompt Generator": """
+You are an expert AI Prompt Engineer.
 
 Your job is to transform the user's idea into a professional,
 detailed and useful AI prompt.
 
 Structure the prompt using:
+
 1. Role
 2. Objective
 3. Context
@@ -206,23 +192,33 @@ Structure the prompt using:
 
 If the user writes in Khmer, explain the result in Khmer.
 The generated prompt can be in English when that produces
-better results for AI image, video, marketing or technical tools.""",
+better results for AI image, video, marketing or technical tools.
+""",
 
-            "📰 Article Writer": """You are a professional article and content writer.
+    "📰 Article Writer": """
+You are a professional article and content writer.
 
 Write high-quality articles based on the user's topic.
 
 Use this structure when appropriate:
+
 # Title
+
 ## Introduction
+
 ## Main Content
+
 ## Examples
+
 ## Conclusion
 
 If the user writes in Khmer, write the article in Khmer.
-Make the article natural, informative and easy to read.""",
 
-            "🌐 Khmer ↔ English Translation": """You are a professional Khmer-English translator.
+Make the article natural, informative and easy to read.
+""",
+
+    "🌐 Khmer ↔ English Translation": """
+You are a professional Khmer-English translator.
 
 Detect the language automatically.
 
@@ -239,36 +235,43 @@ Preserve:
 - Numbers
 - Context
 
-Do not unnecessarily add information."""
-        }
+Do not unnecessarily add information.
+"""
+}
 
-        system_prompt = SYSTEM_PROMPTS.get(mode, SYSTEM_PROMPTS["💬 Q&A"])
 
-        # Call OpenAI API
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message}
-            ],
-            temperature=0.7,
-            max_tokens=1000
-        )
+def generate_response(mode, user_message):
 
-        return response["choices"][0]["message"]["content"]
+    import ollama
 
-    except ImportError:
-        return "Error: OpenAI library not installed. Run: pip install openai"
-    except Exception as e:
-        return f"Error: {str(e)}\n\nMake sure your OpenAI API key is valid and added to Streamlit Secrets."
+    system_prompt = SYSTEM_PROMPTS.get(
+        mode,
+        SYSTEM_PROMPTS["💬 Q&A"]
+    )
 
+    client = ollama.Client(host=OLLAMA_BASE_URL)
+    response = client.chat(
+        model=MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": system_prompt
+            },
+            {
+                "role": "user",
+                "content": user_message
+            }
+        ]
+    )
+
+    return response["message"]["content"]
 
 import streamlit as st
 
 
-# ================================================
+# ------------------------------------------------
 # PAGE CONFIG
-# ================================================
+# ------------------------------------------------
 
 st.set_page_config(
     page_title="AI Assistant",
@@ -277,16 +280,16 @@ st.set_page_config(
 )
 
 
-# ================================================
+# ------------------------------------------------
 # DATABASE
-# ================================================
+# ------------------------------------------------
 
 create_tables()
 
 
-# ================================================
+# ------------------------------------------------
 # SESSION STATE
-# ================================================
+# ------------------------------------------------
 
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
@@ -298,9 +301,9 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 
-# ================================================
+# ------------------------------------------------
 # LOGIN / REGISTER
-# ================================================
+# ------------------------------------------------
 
 def authentication_page():
 
@@ -417,9 +420,9 @@ def authentication_page():
                     st.error(message)
 
 
-# ================================================
+# ------------------------------------------------
 # CHATBOT
-# ================================================
+# ------------------------------------------------
 
 def chatbot_page():
 
@@ -530,8 +533,9 @@ def chatbot_page():
                 except Exception as e:
 
                     response = (
-                        "Sorry, I couldn't generate a response.\n\n"
-                        f"Error: {str(e)}"
+                        "Sorry, I couldn't connect to "
+                        "the AI model.\n\n"
+                        f"Error: {e}"
                     )
 
                     st.error(response)
@@ -551,9 +555,9 @@ def chatbot_page():
         )
 
 
-# ================================================
+# ------------------------------------------------
 # APP ROUTER
-# ================================================
+# ------------------------------------------------
 
 if not st.session_state.logged_in:
 
